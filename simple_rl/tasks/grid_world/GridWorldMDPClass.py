@@ -1,0 +1,459 @@
+''' GridWorldMDPClass.py: Contains the GridWorldMDP class. '''
+
+# Python imports.
+from __future__ import print_function
+import random
+import sys, os
+import copy
+import numpy as np
+from collections import defaultdict
+import random
+
+# Other imports.
+from simple_rl.mdp.MDPClass import MDP
+from simple_rl.tasks.grid_world.GridWorldStateClass import GridWorldState
+
+# Fix input to cooperate with python 2 and 3.
+try:
+   input = raw_input
+except NameError:
+   pass
+
+class GridWorldMDP(MDP):
+    ''' Class for a Grid World MDP '''
+
+    # Static constants.
+    ACTIONS = ["stay", "up", "down", "left", "right"]
+
+    def __init__(self,
+                width=5,
+                height=3,
+                init_loc=(1, 1),
+                rand_init=False,
+                goal_locs=[()], #goal is food with reward of -1
+                lava_locs=[()], #lava is poison with reward of -1
+                sink_locs =[()], #sink is sinkhole that just has a bad transistion probability
+                goal_reward = 1, 
+                walls=[],
+                is_goal_terminal=False, #we change this here to run IMRL 
+                is_lava_terminal=False,
+                gamma=0.99,
+                slip_prob=0.0,
+                sink_prob=0.95, #prob of sinking in sinkhole if agent is in sinkhole i.e. with 1-sink_prob it would escape
+                step_cost=0.05,
+                lava_cost=1.0, 
+                is_teleportation = True, #this true if we want agent to teleport after reaching goal,
+                possible_locations = [()], #array for possible location for the agent location to be                 
+                name="gridworld",
+                diagnosis=False):
+        '''
+        Args:
+            height (int)
+            width (int)
+            init_loc (tuple: (int, int))
+            goal_locs (list of tuples: [(int, int)...])
+            lava_locs (list of tuples: [(int, int)...]): These locations return -1 reward.
+            sink_locs (list of tupes): These locations are sinkholes and very hard to get out of -- no use just avoiding them. 
+            walls (list)
+            is_goal_terminal (bool)
+        '''
+
+        # Setup init location.
+        self.rand_init = rand_init
+        if rand_init:
+            init_loc = random.randint(1, width), random.randint(1, height)
+            while init_loc in walls:
+                init_loc = random.randint(1, width), random.randint(1, height)
+        self.init_loc = init_loc
+        init_state = GridWorldState(init_loc[0], init_loc[1])
+
+        MDP.__init__(self, GridWorldMDP.ACTIONS, self._transition_func, self._reward_func, init_state=init_state, gamma=gamma)
+
+        if type(goal_locs) is not list:
+            raise ValueError("(simple_rl) GridWorld Error: argument @goal_locs needs to be a list of locations. For example: [(3,3), (4,3)].")
+        self.step_cost = step_cost
+        self.lava_cost = lava_cost
+        self.goal_reward = goal_reward
+        self.walls = walls
+        self.width = width
+        self.height = height
+        self.goal_locs = goal_locs
+        self.cur_state = GridWorldState(init_loc[0], init_loc[1])
+        self.is_goal_terminal = is_goal_terminal
+        self.is_lava_terminal = is_lava_terminal
+        self.is_teleportation = is_teleportation
+        self.possible_locations = possible_locations
+        self.slip_prob = slip_prob
+        self.name = name
+        self.lava_locs = lava_locs
+        self.sink_locs = sink_locs
+        self.sink_prob = sink_prob
+        self.diagnosis = diagnosis
+
+    def get_parameters(self):
+        '''
+        Returns:
+            (dict) key=param_name (str) --> val=param_val (object).
+        '''
+        param_dict = defaultdict(int)
+        param_dict["width"] = self.width
+        param_dict["height"] = self.height
+        param_dict["init_loc"] = self.init_loc
+        param_dict["rand_init"] = self.rand_init
+        param_dict["goal_locs"] = self.goal_locs
+        param_dict["lava_locs"] = self.lava_locs
+        param_dict["sink_locs"] = self.sink_locs
+        param_dict["walls"] = self.walls
+        param_dict["is_goal_terminal"] = self.is_goal_terminal
+        param_dict["gamma"] = self.gamma
+        param_dict["slip_prob"] = self.slip_prob
+        param_dict["step_cost"] = self.step_cost
+        param_dict["lava_cost"] = self.lava_cost
+        param_dict["goal_reward"] = self.goal_reward
+
+        return param_dict
+
+    def set_slip_prob(self, slip_prob):
+        self.slip_prob = slip_prob
+
+    def get_slip_prob(self):
+        return self.slip_prob
+
+    def is_goal_state(self, state):
+        return (state.x, state.y) in self.goal_locs
+
+    def _reward_func(self, state, action, next_state):
+        '''
+        Args:
+            state (State)
+            action (str)
+            next_state (State)
+
+        Returns
+            (float)
+        '''
+        if (int(next_state.x), int(next_state.y)) in self.goal_locs:            
+            reward = self.goal_reward - self.step_cost
+            if self.is_teleportation: 
+                if self.diagnosis:
+                    next_state = GridWorldState(1,1)  #-- for diagnosis
+                else:
+                    a = random.sample(self.possible_locations,1) #randomly teleport the agent to possible locations
+                    next_state = GridWorldState(a[0][0], a[0][1])  
+                    #print(next_state)      
+                
+                
+            return reward, self.is_teleportation, next_state
+        
+        elif (int(next_state.x), int(next_state.y)) in self.lava_locs:
+            reward = -self.lava_cost - self.step_cost
+            return reward, False, 0
+        else:
+            reward = 0- self.step_cost
+            return reward, False, 0
+
+    def _is_goal_state_action(self, state, action):
+        '''
+        Args:
+            state (State)
+            action (str)
+
+        Returns:
+            (bool): True iff the state-action pair send the agent to the goal state.
+        '''
+        if (state.x, state.y) in self.goal_locs and self.is_goal_terminal:
+            # Already at terminal.
+            return False
+        if (state.x, state.y) in self.lava_locs:
+            return False
+
+        if action == "left" and (state.x - 1, state.y) in self.goal_locs:
+            return True
+        elif action == "right" and (state.x + 1, state.y) in self.goal_locs:
+            return True
+        elif action == "stay" and (state.x, state.y) in self.goal_locs:
+            return True
+        elif action == "down" and (state.x, state.y - 1) in self.goal_locs:
+            return True
+        elif action == "up" and (state.x, state.y + 1) in self.goal_locs:
+            return True
+        else:
+            return False
+
+    def _is_lava_state_action(self, state, action):
+        '''
+        Args:
+            state (State)
+            action (str)
+
+        Returns:
+            (bool): True iff the state-action pair send the agent to the goal state.
+        '''
+        if state.is_terminal():
+            return False
+
+        if action == "left" and (state.x - 1, state.y) in self.lava_locs:
+            return True
+        elif action == "stay" and (state.x, state.y) in self.lava_locs:
+            return True
+        elif action == "right" and (state.x + 1, state.y) in self.lava_locs:
+            return True
+        elif action == "down" and (state.x, state.y - 1) in self.lava_locs:
+            return True
+        elif action == "up" and (state.x, state.y + 1) in self.lava_locs:
+            return True
+        else:
+            return False
+
+    def _is_sink_state(self,state):
+        if (state.x, state.y) in self.sink_locs:
+            return True
+        else:
+            return False
+        
+        
+    def _is_sink_state_action(self, state, action):
+        '''
+        Args:
+            state (State)
+            action (str)
+
+        Returns:
+            (bool): True iff the state-action pair send the agent to the goal state.
+        '''
+        if state.is_terminal():
+            return False
+
+        if action == "left" and (state.x - 1, state.y) in self.sink_locs:
+            return True
+        elif action == "stay" and (state.x, state.y) in self.sink_locs:
+            return True
+        elif action == "right" and (state.x + 1, state.y) in self.sink_locs:
+            return True
+        elif action == "down" and (state.x, state.y - 1) in self.sink_locs:
+            return True
+        elif action == "up" and (state.x, state.y + 1) in self.sink_locs:
+            return True
+        else:
+            return False
+        
+        
+    def _transition_func(self, state, action):
+        '''
+        Args:
+            state (State)
+            action (str)
+
+        Returns
+            (State)
+        '''
+        if state.is_terminal():
+            return state
+                
+        if not(self._is_goal_state_action(state, action)) and self.slip_prob > random.random():
+            # Flip dir.            
+            if action == "up":
+                action = random.choice(["left", "right"])
+            elif action == "stay":
+                action = random.choice(["up", "down", "left", "right"])    
+            elif action == "down":
+                action = random.choice(["left", "right"])
+            elif action == "left":
+                action = random.choice(["up", "down"])
+            elif action == "right":
+                action = random.choice(["up", "down"])
+     
+        if (self._is_sink_state(state)):  #if current state is sinkhole, then just stay there with high probability
+            if self.sink_prob > random.random():
+                action = "stay" #stay in sinkhole
+            else:    
+                action = action #else just take the action that was supposed to happen
+
+        if action == "up" and state.y < self.height and not self.is_wall(state.x, state.y + 1):
+            next_state = GridWorldState(state.x, state.y + 1)
+        elif action == "down" and state.y > 1 and not self.is_wall(state.x, state.y - 1):
+            next_state = GridWorldState(state.x, state.y - 1)
+        elif action == "right" and state.x < self.width and not self.is_wall(state.x + 1, state.y):
+            next_state = GridWorldState(state.x + 1, state.y)
+        elif action == "left" and state.x > 1 and not self.is_wall(state.x - 1, state.y):
+            next_state = GridWorldState(state.x - 1, state.y)
+        elif action == "stay":
+            next_state = GridWorldState(state.x, state.y)
+        else:
+            next_state = GridWorldState(state.x, state.y)    
+
+        #for continous, uncomment the below lines (except the return statement)
+        landed_in_term_goal = (next_state.x, next_state.y) in self.goal_locs and self.is_goal_terminal
+        if landed_in_term_goal:
+            next_state.set_terminal(True)
+        
+        return next_state
+
+    def set_goal(self):
+        self.goal_locs = (1,1)
+
+    def is_wall(self, x, y):
+        '''
+        Args:
+            x (int)
+            y (int)
+
+        Returns:
+            (bool): True iff (x,y) is a wall location.
+        '''
+
+        return (x, y) in self.walls
+
+    def __str__(self):
+        return self.name + "_h-" + str(self.height) + "_w-" + str(self.width)
+
+    def __repr__(self):
+        return self.__str__()
+
+    def get_goal_locs(self):
+        return self.goal_locs
+
+    def get_lava_locs(self):
+        return self.lava_locs
+    
+    def get_sink_locs(self):
+        return self.sink_locs
+
+    def visualize_policy(self, agent, step, folder):
+        
+        from simple_rl.utils import mdp_visualizer as mdpv
+        from simple_rl.tasks.grid_world.grid_visualizer import _draw_state
+
+        action_char_dict = {
+            "up":"^",       #u"\u2191",
+            "down":"v",     #u"\u2193",
+            "left":"<",     #u"\u2190",
+            "right":">",    #u"\u2192"
+            "stay":"+",    #u"\u219."
+        }
+
+        mdpv.visualize_policy(self, agent, _draw_state, step, folder=folder)
+
+    def visualize_agent(self, agent):
+        from simple_rl.utils import mdp_visualizer as mdpv
+        from simple_rl.tasks.grid_world.grid_visualizer import _draw_state
+        mdpv.visualize_agent(self, agent, _draw_state)
+
+    def visualize_value(self, agent, step, folder):
+        from simple_rl.utils import mdp_visualizer as mdpv
+        from simple_rl.tasks.grid_world.grid_visualizer import _draw_state
+        mdpv.visualize_value(self, agent, _draw_state, step, folder=folder)
+
+    def visualize_counts(self, agent, visit_counts, step, folder):
+        from simple_rl.utils import mdp_visualizer as mdpv
+        from simple_rl.tasks.grid_world.grid_visualizer import _draw_state
+        from simple_rl.tasks.grid_world.grid_visualizer import _draw_state_2
+        mdpv.visualize_counts(self, agent, _draw_state, _draw_state_2, visit_counts, 
+            step, folder=folder)
+
+    def visualize_learning(self, agent, delay=0.005, num_ep=None, num_steps=None, non_stationary = True, frequency_change = 2):
+        from simple_rl.utils import mdp_visualizer as mdpv
+        from simple_rl.tasks.grid_world.grid_visualizer import _draw_state
+        mdpv.visualize_learning(self, agent, _draw_state, delay=delay, num_ep=num_ep, num_steps=num_steps, non_stationary =non_stationary, frequency_change = frequency_change)
+        input("Press anything to quit")
+
+    def visualize_interaction(self):
+        from simple_rl.utils import mdp_visualizer as mdpv
+        from simple_rl.tasks.grid_world.grid_visualizer import _draw_state
+        mdpv.visualize_interaction(self, _draw_state)
+
+def _error_check(state, action):
+    '''
+    Args:
+        state (State)
+        action (str)
+
+    Summary:
+        Checks to make sure the received state and action are of the right type.
+    '''
+
+    if action not in GridWorldMDP.ACTIONS:
+        raise ValueError("(simple_rl) GridWorldError: the action provided (" + str(action) + ") was invalid in state: " + str(state) + ".")
+
+    if not isinstance(state, GridWorldState):
+        raise ValueError("(simple_rl) GridWorldError: the given state (" + str(state) + ") was not of the correct class.")
+
+def make_grid_world_from_file(file_name, randomize=False, num_goals=1, name=None, goal_num=None, slip_prob=0.0):
+    '''
+    Args:
+        file_name (str)
+        randomize (bool): If true, chooses a random agent location and goal location.
+        num_goals (int)
+        name (str)
+
+    Returns:
+        (GridWorldMDP)
+
+    Summary:
+        Builds a GridWorldMDP from a file:
+            'w' --> wall
+            'a' --> agent
+            'g' --> goal
+            'l' --> lava
+            '-' --> empty
+    '''
+
+    if name is None:
+        name = file_name.split(".")[0]
+
+    # grid_path = os.path.dirname(os.path.realpath(__file__))
+    wall_file = open(os.path.join(os.getcwd(), file_name))
+    wall_lines = wall_file.readlines()
+
+    # Get walls, agent, goal loc.
+    num_rows = len(wall_lines)
+    num_cols = len(wall_lines[0].strip())
+    empty_cells = []
+    agent_x, agent_y = 1, 1
+    walls = []
+    goal_locs = []
+    lava_locs = []
+
+    for i, line in enumerate(wall_lines):
+        line = line.strip()
+        for j, ch in enumerate(line):
+            if ch == "w":
+                walls.append((j + 1, num_rows - i))
+            elif ch == "g":
+                goal_locs.append((j + 1, num_rows - i))
+            elif ch == "l":
+                lava_locs.append((j + 1, num_rows - i))
+            elif ch == "a":
+                agent_x, agent_y = j + 1, num_rows - i
+            elif ch == "-":
+                empty_cells.append((j + 1, num_rows - i))
+
+    if goal_num is not None:
+        goal_locs = [goal_locs[goal_num % len(goal_locs)]]
+
+    if randomize:
+        agent_x, agent_y = random.choice(empty_cells)
+        if len(goal_locs) == 0:
+            # Sample @num_goals random goal locations.
+            goal_locs = random.sample(empty_cells, num_goals)
+        else:
+            goal_locs = random.sample(goal_locs, num_goals)
+
+    if len(goal_locs) == 0:
+        goal_locs = [(num_cols, num_rows)]
+
+    return GridWorldMDP(width=num_cols, height=num_rows, init_loc=(agent_x, agent_y), goal_locs=goal_locs, lava_locs=lava_locs, walls=walls, name=name, slip_prob=slip_prob)
+
+    def reset(self):
+        if self.rand_init:
+            init_loc = random.randint(1, num_cols), random.randint(1, num_rows)
+            self.cur_state = GridWorldState(init_loc[0], init_loc[1])
+        else:
+            self.cur_state = copy.deepcopy(self.init_state)
+
+def main():
+    grid_world = GridWorldMDP(5, 10, (1, 1), (6, 7))
+    grid_world.visualize_policy()
+
+if __name__ == "__main__":
+    main()
