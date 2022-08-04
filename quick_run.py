@@ -24,11 +24,9 @@ import sys
 def parse_args():
     # Add all arguments
     parser = argparse.ArgumentParser()
-    #parser.add_argument("-v", type=str, default="learning", nargs='?', help="Choose the visualization type (one of {value, policy, agent, learning or interactive}).")
-    #args = parser.parse_args()
     parser.add_argument('-c', help = "index number")
-    parser.add_argument('-agent', default=0, help="Choose agent, All(0) or Compare(0).")
-    parser.add_argument('-folder', default='exp1/', help="Choose agent, All(0) or Compare(0).")
+    parser.add_argument('-agent', default=0, help="Choose agent, Standard(0) or Compare(0).")
+    parser.add_argument('-folder', default='exp1/', help="Choose agent, Standard(0) or Compare(0).")
     args = parser.parse_args(sys.argv[1:])
     
     return args.c, args.agent, args.folder
@@ -44,15 +42,15 @@ def main():
         size = 13
         e = 0.1 #epsilon
         teleport = True
-        lr_dynamic = False
+        lr_dynamic = False #is the learning dynamic? Non-stationary environments require dynamic LR
         sp = 0.1 #slip_prob
         
-        plot_steps = 500 #num of steps to plot the value, policy, and counts for
+        plot_steps = 500 #step size to plot the value, policy, and counts for
         plot_value = True
         plot_counts = False
         plot_policy = False
         
-        _,agent,_ = parse_args() #0 for all, 1 for compare
+        _,agent,_ = parse_args() #0 for standard, 1 for compare
         _,_,f = parse_args()
         folder = 'results/' + f
 
@@ -60,17 +58,17 @@ def main():
         viz = "value"
 
         if int(agent) == 0:
-            print('all', num_lavas, num_sinks)
+            print('standard', num_lavas, num_sinks)
             w1 = 0.9 
-            w2 = 0.6
-            w3 = 0.1 
-            r = 0.001 #average reward rate
+            w2 = 0.0
+            w3 = 0.0 
+            r = 0.00 #aspiration level
         elif int(agent) == 1:
             print('compare', num_lavas, num_sinks)
             w1 = 0.0                      
-            w2 = 0.6
+            w2 = 0.0
             w3 = 0.3 
-            r = 0.01
+            r = 0.01 #aspiration level
 
         default_q = 0.0 #initial q-values
 
@@ -99,14 +97,6 @@ def main():
                 plot_steps = plot_steps, reset_at_terminal=reset_at_terminal, folder=folder,
                 frequency_change=frequency_change)
 
-        elif viz == "episodic_value":
-            #shows value of states during learning is performed
-            c,_,_ = parse_args()
-            filename1 = 'episodic_returns/optimistic_agent_0.5_'+str(c)+'.pkl'
-            run_single_agent_on_mdp(ql_agent, mdp, episodes=num_episodes, steps=lifetime, 
-            	non_stationary = non_stationary, plot_value=False, plot_counts = False, plot_policy=False, plot_steps = plot_steps, 
-                reset_at_terminal=reset_at_terminal, filename = filename1, frequency_change=frequency_change)  
-
         elif viz == "average":
             # visualize average count and value of states visited by one agent            
             _, _, _, _, _, accumulated_visit_counts = run_single_agent_on_mdp(ql_agent, 
@@ -116,7 +106,7 @@ def main():
             for s in list(ql_agent.q_func.keys()):
                 accumulated_values[s.x-1][s.y-1] = ql_agent.get_value(s)
             
-            for i in range(19):                
+            for i in range(29):                
                 #re-intialize q-agent and mdp again
                 mdp = make_custom_mdp(size = size, make_walls = True, num_goals = 1, 
                 	num_lavas = num_lavas, num_sinks = num_sinks,gamma=0.99,slip_prob=sp,
